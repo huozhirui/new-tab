@@ -1,4 +1,4 @@
-# Tab Out
+# New Tab 
 
 **A calm new-tab dashboard for cleaning up browser clutter.**
 
