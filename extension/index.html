@@ -1,9 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tab Out</title>
+  <meta name="color-scheme" content="light dark">
+  <title>new table</title>
 
   <!-- Google Fonts: Newsreader (for headings/numbers) + DM Sans (for body text) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -14,22 +15,8 @@
 <body>
 <div class="container">
 
-
-
   <!-- ================================================================
-       HEADER — greeting on the left
-       ================================================================ -->
-  <header>
-    <div class="header-left">
-      <!-- "Good afternoon" — written by getGreeting() in app.js -->
-      <h1 id="greeting"></h1>
-      <!-- "Friday, April 4, 2026" — written by getDateDisplay() in app.js -->
-      <div class="date" id="dateDisplay"></div>
-    </div>
-  </header>
-
-  <!-- ================================================================
-       TAB OUT DUPES BANNER — appears when you have extra Tab Out tabs open
+       DUPES BANNER — appears when you have extra new table tabs open
        Hidden by default; app.js shows it when dupeTabOutCount > 1
        ================================================================ -->
   <div class="tab-cleanup-banner" id="tabOutDupeBanner" style="display:none">
@@ -40,10 +27,10 @@
         </svg>
       </div>
       <div class="tab-cleanup-text">
-        You have <strong id="tabOutDupeCount"></strong> Tab Out tabs open. Keep just this one?
+        已打开 <strong id="tabOutDupeCount"></strong> 个 new table 页面，只保留当前这个？
       </div>
     </div>
-    <button class="tab-cleanup-btn" data-action="close-tabout-dupes">Close extras</button>
+    <button class="tab-cleanup-btn" data-action="close-tabout-dupes">关闭多余页面</button>
   </div>
 
   <!-- ================================================================
@@ -56,18 +43,79 @@
 
     <!-- LEFT COLUMN: Open tabs -->
     <div class="active-section" id="openTabsSection" style="display:none">
-      <div class="section-header">
-        <h2 id="openTabsSectionTitle">Right now</h2>
-        <div class="section-line"></div>
-        <div class="section-count" id="openTabsSectionCount"></div>
-      </div>
-      <div class="missions" id="openTabsMissions"></div>
+      <section class="quick-access dashboard-block" id="quickAccess" data-block-id="quickAccess">
+        <div class="quick-access-head">
+          <button class="quick-access-toggle" id="quickAccessToggle" type="button">
+            <svg class="quick-access-chevron" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+            </svg>
+            <span>便捷访问</span>
+          </button>
+          <div class="section-line"></div>
+          <div class="block-order-actions">
+            <button type="button" data-action="move-block-up" data-block-id="quickAccess" title="上移">↑</button>
+            <button type="button" data-action="move-block-down" data-block-id="quickAccess" title="下移">↓</button>
+          </div>
+        </div>
+        <div class="quick-access-body" id="quickAccessBody">
+          <div class="quick-links" id="quickLinks"></div>
+        </div>
+      </section>
+
+      <section class="todo-section dashboard-block" id="todoSection" data-block-id="todo">
+        <div class="section-header">
+          <button class="section-toggle" id="todoToggle" type="button">
+            <svg class="section-chevron" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+            </svg>
+            <span>待办事项</span>
+          </button>
+          <div class="section-line"></div>
+          <div class="section-count" id="todoCount"></div>
+          <button class="section-add-btn" type="button" id="openTodoModal">添加</button>
+          <div class="block-order-actions">
+            <button type="button" data-action="move-block-up" data-block-id="todo" title="上移">↑</button>
+            <button type="button" data-action="move-block-down" data-block-id="todo" title="下移">↓</button>
+          </div>
+        </div>
+        <div class="todo-body" id="todoBody">
+          <div class="todo-list" id="todoList"></div>
+        </div>
+      </section>
+
+      <section class="open-tabs-block dashboard-block" id="openTabsBlock" data-block-id="openTabs">
+        <div class="section-header">
+          <button class="section-toggle" id="openTabsToggle" type="button">
+            <svg class="section-chevron" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+            </svg>
+            <span id="openTabsSectionTitle">当前标签</span>
+          </button>
+          <div class="section-line"></div>
+          <div class="section-count" id="openTabsSectionCount"></div>
+          <div class="block-order-actions">
+            <button type="button" data-action="move-block-up" data-block-id="openTabs" title="上移">↑</button>
+            <button type="button" data-action="move-block-down" data-block-id="openTabs" title="下移">↓</button>
+          </div>
+        </div>
+        <div class="open-tabs-body" id="openTabsBody">
+          <div class="open-tabs-tools">
+            <div class="open-tabs-search">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+              </svg>
+              <input id="openTabsSearch" type="search" placeholder="搜索当前标签..." autocomplete="off">
+            </div>
+          </div>
+          <div class="missions" id="openTabsMissions"></div>
+        </div>
+      </section>
     </div>
 
     <!-- RIGHT COLUMN: Saved for Later checklist -->
     <div class="deferred-column" id="deferredColumn" style="display:none">
       <div class="section-header">
-        <h2>Saved for later</h2>
+        <h2>稍后处理</h2>
         <div class="section-line"></div>
         <div class="section-count" id="deferredCount"></div>
       </div>
@@ -77,18 +125,18 @@
 
       <!-- Empty state — shown when no active deferred tabs -->
       <div class="deferred-empty" id="deferredEmpty" style="display:none">
-        Nothing saved. Living in the moment.
+        暂无保存内容。
       </div>
 
       <!-- Archive section — collapsed by default -->
       <div class="deferred-archive" id="deferredArchive" style="display:none">
         <button class="archive-toggle" id="archiveToggle">
           <svg class="archive-chevron" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" /></svg>
-          Archive
+          归档
           <span class="archive-count" id="archiveCount"></span>
         </button>
         <div class="archive-body" id="archiveBody" style="display:none">
-          <input type="text" class="archive-search" id="archiveSearch" placeholder="Search archived tabs...">
+          <input type="text" class="archive-search" id="archiveSearch" placeholder="搜索归档标签...">
           <div class="archive-list" id="archiveList"></div>
         </div>
       </div>
@@ -96,22 +144,94 @@
 
   </div><!-- end .dashboard-columns -->
 
-  <!-- ================================================================
-       FOOTER — global stats + refresh control
-       ================================================================ -->
-  <footer>
-    <div class="footer-stats">
-      <div class="stat">
-        <div class="stat-num" id="statTabs">—</div>
-        <div class="stat-label">Open tabs</div>
-      </div>
-    </div>
-    <div class="last-refresh">
-      <span style="color: var(--muted); font-size: 11px;"><a href="https://github.com/zarazhangrui/tab-out" target="_top" style="color: var(--muted); text-decoration: underline; text-underline-offset: 2px;">Tab Out</a> by <a href="https://x.com/zarazhangrui" target="_top" style="color: var(--muted); text-decoration: underline; text-underline-offset: 2px;">Zara</a></span>
-    </div>
-  </footer>
-
 </div><!-- end .container -->
+
+<div class="modal-backdrop" id="quickLinkModal" style="display:none">
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="quickLinkModalTitle">
+    <div class="modal-header">
+      <h3 id="quickLinkModalTitle">添加便捷访问</h3>
+      <button class="modal-close" type="button" data-action="close-quick-link-modal" title="关闭">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    <form class="quick-link-form" id="quickLinkForm">
+      <label for="quickLinkTitle">名称</label>
+      <input id="quickLinkTitle" type="text" placeholder="例如 GitHub" autocomplete="off">
+      <label for="quickLinkUrl">链接</label>
+      <input id="quickLinkUrl" type="text" placeholder="https://example.com" autocomplete="off">
+      <div class="modal-actions">
+        <button class="secondary" type="button" data-action="close-quick-link-modal">取消</button>
+        <button id="quickLinkSubmit" type="submit">添加</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="deleteQuickLinkModal" style="display:none">
+  <div class="modal-panel compact" role="dialog" aria-modal="true" aria-labelledby="deleteQuickLinkModalTitle">
+    <div class="modal-header">
+      <h3 id="deleteQuickLinkModalTitle">删除便捷访问？</h3>
+      <button class="modal-close" type="button" data-action="close-delete-quick-link-modal" title="关闭">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    <p class="modal-text" id="deleteQuickLinkText">确认删除这个便捷访问吗？</p>
+    <div class="modal-actions">
+      <button class="secondary" type="button" data-action="close-delete-quick-link-modal">取消</button>
+      <button class="danger" type="button" data-action="confirm-remove-quick-link">删除</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="todoModal" style="display:none">
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="todoModalTitle">
+    <div class="modal-header">
+      <h3 id="todoModalTitle">添加待办事项</h3>
+      <button class="modal-close" type="button" data-action="close-todo-modal" title="关闭">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    <form class="todo-form" id="todoForm">
+      <label for="todoObjective">事项</label>
+      <input id="todoObjective" type="text" placeholder="例如：完成插件体验优化" autocomplete="off">
+      <label for="todoKrs">子项（每行一条，可留空）</label>
+      <textarea id="todoKrs" rows="5" placeholder="整理便捷访问交互&#10;优化当前标签折叠&#10;检查深色模式"></textarea>
+      <div class="modal-actions">
+        <button class="secondary" type="button" data-action="close-todo-modal">取消</button>
+        <button id="todoSubmit" type="submit">添加</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="deleteTodoModal" style="display:none">
+  <div class="modal-panel compact" role="dialog" aria-modal="true" aria-labelledby="deleteTodoModalTitle">
+    <div class="modal-header">
+      <h3 id="deleteTodoModalTitle">删除 TODO？</h3>
+      <button class="modal-close" type="button" data-action="close-delete-todo-modal" title="关闭">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    <p class="modal-text" id="deleteTodoText">确认删除这个 TODO 吗？</p>
+    <div class="modal-actions">
+      <button class="secondary" type="button" data-action="close-delete-todo-modal">取消</button>
+      <button class="danger" type="button" data-action="confirm-delete-todo">删除</button>
+    </div>
+  </div>
+</div>
+
+<div class="quick-link-floating-menu" id="quickLinkMenu" style="display:none">
+  <button type="button" data-action="edit-quick-link">编辑</button>
+  <button type="button" data-action="remove-quick-link">删除</button>
+</div>
 
 <!-- ================================================================
      TOAST — floats above everything, used for action confirmations

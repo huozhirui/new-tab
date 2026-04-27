@@ -1,5 +1,5 @@
 /* ================================================================
-   Tab Out — Dashboard App (Pure Extension Edition)
+   tab new — Dashboard App (Pure Extension Edition)
 
    This file is the brain of the dashboard. Now that the dashboard
    IS the extension page (not inside an iframe), it can call
@@ -25,12 +25,24 @@
 
 // All open tabs — populated by fetchOpenTabs()
 let openTabs = [];
+let openTabsSearchQuery = '';
+let quickAccessCollapsed = true;
+let openTabsCollapsed = false;
+let todoCollapsed = false;
+let pendingQuickLinkDeleteId = '';
+let pendingTodoDeleteId = '';
+let editingQuickLinkId = '';
+let editingTodoId = '';
+let draggedQuickLinkId = '';
+let quickLinkDropPosition = 'before';
+let activeQuickLinkMenuId = '';
+let dashboardBlockOrder = ['quickAccess', 'todo', 'openTabs'];
 
 /**
  * fetchOpenTabs()
  *
  * Reads all currently open browser tabs directly from Chrome.
- * Sets the extensionId flag so we can identify Tab Out's own pages.
+ * Sets the extensionId flag so we can identify tab new's own pages.
  */
 async function fetchOpenTabs() {
   try {
@@ -45,7 +57,7 @@ async function fetchOpenTabs() {
       title:    t.title,
       windowId: t.windowId,
       active:   t.active,
-      // Flag Tab Out's own pages so we can detect duplicate new tabs
+      // Flag tab new's own pages so we can detect duplicate new tabs
       isTabOut: t.url === newtabUrl || t.url === 'chrome://newtab/',
     }));
   } catch {
@@ -172,7 +184,7 @@ async function closeDuplicateTabs(urls, keepOne = true) {
 /**
  * closeTabOutDupes()
  *
- * Closes all duplicate Tab Out new-tab pages except the current one.
+ * Closes all duplicate tab new new-tab pages except the current one.
  */
 async function closeTabOutDupes() {
   const extensionId = chrome.runtime.id;
@@ -186,7 +198,7 @@ async function closeTabOutDupes() {
 
   if (tabOutTabs.length <= 1) return;
 
-  // Keep the active Tab Out tab in the CURRENT window — that's the one the
+  // Keep the active tab new tab in the CURRENT window — that's the one the
   // user is looking at right now. Falls back to any active one, then the first.
   const keep =
     tabOutTabs.find(t => t.active && t.windowId === currentWindow.id) ||
@@ -287,6 +299,28 @@ async function dismissSavedTab(id) {
 /* ----------------------------------------------------------------
    UI HELPERS
    ---------------------------------------------------------------- */
+
+function escapeHtml(value = '') {
+  return String(value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[ch]));
+}
+
+function getDirectUrl(input) {
+  const value = input.trim();
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return value;
+  if (
+    /^[\w.-]+\.[a-z]{2,}([/:?#].*)?$/i.test(value) ||
+    /^localhost(:\d+)?([/:?#].*)?$/i.test(value)
+  ) {
+    return `https://${value}`;
+  }
+  return '';
+}
 
 /**
  * playCloseSound()
@@ -461,13 +495,13 @@ function checkAndShowEmptyState() {
           <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
         </svg>
       </div>
-      <div class="empty-title">Inbox zero, but for tabs.</div>
-      <div class="empty-subtitle">You're free.</div>
+      <div class="empty-title">当前没有需要整理的标签。</div>
+      <div class="empty-subtitle">可以从便捷访问开始。</div>
     </div>
   `;
 
   const countEl = document.getElementById('openTabsSectionCount');
-  if (countEl) countEl.textContent = '0 domains';
+  if (countEl) countEl.textContent = '0 个分组';
 }
 
 /**
@@ -484,35 +518,12 @@ function timeAgo(dateStr) {
   const diffHours = Math.floor((now - then) / 3600000);
   const diffDays  = Math.floor((now - then) / 86400000);
 
-  if (diffMins < 1)   return 'just now';
-  if (diffMins < 60)  return diffMins + ' min ago';
-  if (diffHours < 24) return diffHours + ' hr' + (diffHours !== 1 ? 's' : '') + ' ago';
-  if (diffDays === 1) return 'yesterday';
-  return diffDays + ' days ago';
+  if (diffMins < 1)   return '刚刚';
+  if (diffMins < 60)  return `${diffMins} 分钟前`;
+  if (diffHours < 24) return `${diffHours} 小时前`;
+  if (diffDays === 1) return '昨天';
+  return `${diffDays} 天前`;
 }
-
-/**
- * getGreeting() — "Good morning / afternoon / evening"
- */
-function getGreeting() {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
-}
-
-/**
- * getDateDisplay() — "Friday, April 4, 2026"
- */
-function getDateDisplay() {
-  return new Date().toLocaleDateString('en-US', {
-    weekday: 'long',
-    year:    'numeric',
-    month:   'long',
-    day:     'numeric',
-  });
-}
-
 
 /* ----------------------------------------------------------------
    DOMAIN & TITLE CLEANUP HELPERS
@@ -707,6 +718,7 @@ const ICONS = {
    IN-MEMORY STORE FOR OPEN-TAB GROUPS
    ---------------------------------------------------------------- */
 let domainGroups = [];
+let openTabsTotalCount = 0;
 
 
 /* ----------------------------------------------------------------
@@ -735,7 +747,7 @@ function getRealTabs() {
 /**
  * checkTabOutDupes()
  *
- * Counts how many Tab Out pages are open. If more than 1,
+ * Counts how many tab new pages are open. If more than 1,
  * shows a banner offering to close the extras.
  */
 function checkTabOutDupes() {
@@ -750,6 +762,335 @@ function checkTabOutDupes() {
   } else {
     banner.style.display = 'none';
   }
+}
+
+function matchesOpenTabsSearch(group, tab, query) {
+  if (!query) return true;
+
+  const groupLabel = group.domain === '__landing-pages__'
+    ? 'homepages'
+    : (group.label || friendlyDomain(group.domain) || group.domain);
+
+  return [
+    group.domain,
+    groupLabel,
+    tab.title,
+    tab.url,
+  ].some(value => (value || '').toLowerCase().includes(query));
+}
+
+function renderOpenTabsSection() {
+  const openTabsSection      = document.getElementById('openTabsSection');
+  const openTabsBody         = document.getElementById('openTabsBody');
+  const openTabsMissionsEl   = document.getElementById('openTabsMissions');
+  const openTabsSectionCount = document.getElementById('openTabsSectionCount');
+  const openTabsSectionTitle = document.getElementById('openTabsSectionTitle');
+  if (!openTabsSection || !openTabsBody || !openTabsMissionsEl || !openTabsSectionCount) return;
+
+  const query = openTabsSearchQuery.trim().toLowerCase();
+  const visibleGroups = query
+    ? domainGroups.map(group => ({
+        ...group,
+        tabs: (group.tabs || []).filter(tab => matchesOpenTabsSearch(group, tab, query)),
+      })).filter(group => group.tabs.length > 0)
+    : domainGroups;
+
+  if (openTabsSectionTitle) openTabsSectionTitle.textContent = '当前标签';
+
+  const domainLabel = `${visibleGroups.length} 个分组`;
+  const tabCount = visibleGroups.reduce((sum, group) => sum + group.tabs.length, 0);
+  const searchLabel = query
+    ? `${domainLabel} &nbsp;&middot;&nbsp; ${tabCount} 个结果`
+    : domainLabel;
+
+  openTabsSectionCount.innerHTML = openTabsTotalCount > 0
+    ? `${searchLabel} &nbsp;&middot;&nbsp; <button class="action-btn close-tabs" data-action="close-all-open-tabs" style="font-size:11px;padding:3px 10px;">${ICONS.close} 关闭全部 ${openTabsTotalCount} 个标签</button>`
+    : searchLabel;
+
+  openTabsMissionsEl.innerHTML = visibleGroups.length > 0
+    ? visibleGroups.map(g => renderDomainCard(g)).join('')
+    : query
+      ? '<div class="missions-empty-state"><div class="empty-title">没有匹配的标签。</div><div class="empty-subtitle">可以按标题、链接或域名搜索。</div></div>'
+      : '<div class="missions-empty-state"><div class="empty-title">暂无当前标签。</div><div class="empty-subtitle">可以从上方便捷访问开始。</div></div>';
+
+  openTabsSection.classList.toggle('collapsed', openTabsCollapsed);
+  openTabsBody.style.display = openTabsCollapsed ? 'none' : 'block';
+  openTabsSection.style.display = 'flex';
+}
+
+async function getQuickAccessState() {
+  const {
+    quickLinks = [],
+    quickAccessCollapsed: collapsed = true,
+    openTabsCollapsed: savedOpenTabsCollapsed = false,
+    todoCollapsed: savedTodoCollapsed = false,
+    dashboardBlockOrder: savedBlockOrder = ['quickAccess', 'todo', 'openTabs'],
+  } = await chrome.storage.local.get([
+    'quickLinks',
+    'quickAccessCollapsed',
+    'openTabsCollapsed',
+    'todoCollapsed',
+    'dashboardBlockOrder',
+  ]);
+  quickAccessCollapsed = !!collapsed;
+  openTabsCollapsed = !!savedOpenTabsCollapsed;
+  todoCollapsed = !!savedTodoCollapsed;
+  dashboardBlockOrder = normalizeBlockOrder(savedBlockOrder);
+  return { quickLinks, collapsed: quickAccessCollapsed };
+}
+
+function normalizeBlockOrder(order) {
+  const allowed = ['quickAccess', 'todo', 'openTabs'];
+  const normalized = Array.isArray(order) ? order.filter(id => allowed.includes(id)) : [];
+  for (const id of allowed) {
+    if (!normalized.includes(id)) normalized.push(id);
+  }
+  return normalized;
+}
+
+function applyDashboardBlockOrder() {
+  dashboardBlockOrder.forEach((id, index) => {
+    const block = document.querySelector(`[data-block-id="${id}"]`);
+    if (block) block.style.order = index;
+  });
+}
+
+async function saveQuickLinks(quickLinks) {
+  await chrome.storage.local.set({ quickLinks });
+}
+
+async function getTodoItems() {
+  const { todoItems = [] } = await chrome.storage.local.get('todoItems');
+  return Array.isArray(todoItems) ? todoItems : [];
+}
+
+async function saveTodoItems(todoItems) {
+  await chrome.storage.local.set({ todoItems });
+}
+
+function renderTodoItem(item) {
+  const done = !!item.done;
+  const krs = Array.isArray(item.krs) ? item.krs : [];
+  const krHtml = krs.length > 0
+    ? `<div class="todo-krs">${krs.map(kr => `
+        <label class="todo-kr ${kr.done ? 'done' : ''}">
+          <input type="checkbox" data-action="toggle-todo-kr" data-todo-id="${escapeHtml(item.id)}" data-kr-id="${escapeHtml(kr.id)}" ${kr.done ? 'checked' : ''}>
+          <span>${escapeHtml(kr.title)}</span>
+        </label>
+      `).join('')}</div>`
+    : '';
+
+  return `<div class="todo-item ${done ? 'done' : ''}">
+    <div class="todo-main">
+      <label class="todo-o">
+        <input type="checkbox" data-action="toggle-todo-o" data-todo-id="${escapeHtml(item.id)}" ${done ? 'checked' : ''}>
+        <span>${escapeHtml(item.title)}</span>
+      </label>
+      <div class="todo-actions">
+        <button type="button" data-action="edit-todo" data-todo-id="${escapeHtml(item.id)}">编辑</button>
+        <button type="button" data-action="delete-todo" data-todo-id="${escapeHtml(item.id)}">删除</button>
+      </div>
+    </div>
+    ${krHtml}
+  </div>`;
+}
+
+async function renderTodoList() {
+  const section = document.getElementById('todoSection');
+  const body = document.getElementById('todoBody');
+  const list = document.getElementById('todoList');
+  const count = document.getElementById('todoCount');
+  if (!section || !body || !list || !count) return;
+
+  const items = await getTodoItems();
+  const doneCount = items.filter(item => item.done).length;
+  count.textContent = items.length > 0 ? `${doneCount}/${items.length} 完成` : '0 项';
+  section.classList.toggle('collapsed', todoCollapsed);
+  body.style.display = todoCollapsed ? 'none' : 'block';
+
+  list.innerHTML = items.length > 0
+    ? items.map(renderTodoItem).join('')
+    : '<div class="todo-empty">暂无 TODO，可以添加一个事项，或为它补充子项。</div>';
+}
+
+async function openTodoModal(todoId = '') {
+  const modal = document.getElementById('todoModal');
+  const title = document.getElementById('todoModalTitle');
+  const submit = document.getElementById('todoSubmit');
+  const objectiveInput = document.getElementById('todoObjective');
+  const krsInput = document.getElementById('todoKrs');
+  if (!modal || !objectiveInput || !krsInput) return;
+
+  editingTodoId = todoId;
+  if (todoId) {
+    const items = await getTodoItems();
+    const item = items.find(todo => todo.id === todoId);
+    if (!item) return;
+    if (title) title.textContent = '编辑 TODO';
+    if (submit) submit.textContent = '保存';
+    objectiveInput.value = item.title || '';
+    krsInput.value = (item.krs || []).map(kr => kr.title).join('\n');
+  } else {
+    if (title) title.textContent = '添加待办事项';
+    if (submit) submit.textContent = '添加';
+    objectiveInput.value = '';
+    krsInput.value = '';
+  }
+
+  modal.style.display = 'flex';
+  setTimeout(() => objectiveInput.focus(), 0);
+}
+
+function closeTodoModal() {
+  const modal = document.getElementById('todoModal');
+  editingTodoId = '';
+  if (modal) modal.style.display = 'none';
+}
+
+async function openDeleteTodoModal(todoId) {
+  const items = await getTodoItems();
+  const item = items.find(todo => todo.id === todoId);
+  if (!item) return;
+  pendingTodoDeleteId = todoId;
+  const modal = document.getElementById('deleteTodoModal');
+  const text = document.getElementById('deleteTodoText');
+  if (text) text.textContent = `确认删除「${item.title}」吗？`;
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeDeleteTodoModal() {
+  const modal = document.getElementById('deleteTodoModal');
+  pendingTodoDeleteId = '';
+  if (modal) modal.style.display = 'none';
+}
+
+function getQuickLinkTitle(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+}
+
+function renderQuickLink(link) {
+  const title = link.title || getQuickLinkTitle(link.url);
+  return `<div class="quick-link" draggable="true" data-link-id="${escapeHtml(link.id)}" title="${escapeHtml(`${title}\n${link.url}`)}">
+    <button class="quick-link-open" data-action="open-quick-link" data-link-url="${escapeHtml(link.url)}">
+      <span class="quick-link-title">${escapeHtml(title)}</span>
+    </button>
+    <div class="quick-link-menu">
+      <button class="quick-link-menu-trigger" type="button" data-action="toggle-quick-link-menu" data-link-id="${escapeHtml(link.id)}" title="编辑">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.2" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" />
+        </svg>
+      </button>
+    </div>
+  </div>`;
+}
+
+async function renderQuickAccess() {
+  const root = document.getElementById('quickAccess');
+  const body = document.getElementById('quickAccessBody');
+  const linksEl = document.getElementById('quickLinks');
+  if (!root || !body || !linksEl) return;
+
+  try {
+    const { quickLinks, collapsed } = await getQuickAccessState();
+    applyDashboardBlockOrder();
+    root.classList.toggle('collapsed', collapsed);
+    body.style.display = collapsed ? 'none' : 'block';
+
+    const addLink = '<button class="quick-link quick-link-add" type="button" id="openQuickLinkModal">+ 添加</button>';
+    linksEl.innerHTML = quickLinks.length > 0
+      ? quickLinks.map(renderQuickLink).join('') + addLink
+      : `<div class="quick-links-empty">添加常用网站，之后可以一键打开。</div>${addLink}`;
+  } catch (err) {
+    console.warn('[tab-new] Could not load quick access:', err);
+  }
+}
+
+async function openQuickLinkModal(linkId = '') {
+  const modal = document.getElementById('quickLinkModal');
+  const modalTitle = document.getElementById('quickLinkModalTitle');
+  const submit = document.getElementById('quickLinkSubmit');
+  const titleInput = document.getElementById('quickLinkTitle');
+  const urlInput = document.getElementById('quickLinkUrl');
+  if (!modal) return;
+
+  editingQuickLinkId = linkId;
+  if (linkId) {
+    const { quickLinks = [] } = await chrome.storage.local.get('quickLinks');
+    const link = quickLinks.find(item => item.id === linkId);
+    if (!link) return;
+    if (modalTitle) modalTitle.textContent = '编辑便捷访问';
+    if (submit) submit.textContent = '保存';
+    if (titleInput) titleInput.value = link.title || getQuickLinkTitle(link.url);
+    if (urlInput) urlInput.value = link.url;
+  } else {
+    if (modalTitle) modalTitle.textContent = '添加便捷访问';
+    if (submit) submit.textContent = '添加';
+    if (titleInput) titleInput.value = '';
+    if (urlInput) urlInput.value = '';
+  }
+
+  modal.style.display = 'flex';
+  setTimeout(() => titleInput?.focus(), 0);
+}
+
+function closeQuickLinkModal() {
+  const modal = document.getElementById('quickLinkModal');
+  editingQuickLinkId = '';
+  if (!modal) return;
+  modal.style.display = 'none';
+}
+
+async function openDeleteQuickLinkModal(linkId) {
+  const { quickLinks = [] } = await chrome.storage.local.get('quickLinks');
+  const link = quickLinks.find(item => item.id === linkId);
+  if (!link) return;
+
+  pendingQuickLinkDeleteId = linkId;
+  const modal = document.getElementById('deleteQuickLinkModal');
+  const text = document.getElementById('deleteQuickLinkText');
+  if (text) text.textContent = `确认删除「${link.title || getQuickLinkTitle(link.url)}」吗？`;
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeDeleteQuickLinkModal() {
+  const modal = document.getElementById('deleteQuickLinkModal');
+  pendingQuickLinkDeleteId = '';
+  if (modal) modal.style.display = 'none';
+}
+
+function closeQuickLinkMenu() {
+  const menu = document.getElementById('quickLinkMenu');
+  activeQuickLinkMenuId = '';
+  if (menu) {
+    menu.style.display = 'none';
+    menu.dataset.linkId = '';
+  }
+}
+
+function openQuickLinkMenu(trigger, linkId) {
+  const menu = document.getElementById('quickLinkMenu');
+  if (!menu || !trigger) return;
+
+  activeQuickLinkMenuId = linkId;
+  menu.dataset.linkId = linkId;
+  menu.style.display = 'block';
+
+  const rect = trigger.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  const gap = 6;
+  const left = Math.min(Math.max(8, rect.right - menuRect.width), window.innerWidth - menuRect.width - 8);
+  const belowTop = rect.bottom + gap;
+  const aboveTop = rect.top - menuRect.height - gap;
+  const top = belowTop + menuRect.height <= window.innerHeight - 8
+    ? belowTop
+    : Math.max(8, aboveTop);
+
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
 }
 
 
@@ -772,10 +1113,10 @@ function buildOverflowChips(hiddenTabs, urlCounts = {}) {
       ${faviconUrl ? `<img class="chip-favicon" src="${faviconUrl}" alt="" onerror="this.style.display='none'">` : ''}
       <span class="chip-text">${label}</span>${dupeTag}
       <div class="chip-actions">
-        <button class="chip-action chip-save" data-action="defer-single-tab" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="Save for later">
+        <button class="chip-action chip-save" data-action="defer-single-tab" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="稍后处理">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" /></svg>
         </button>
-        <button class="chip-action chip-close" data-action="close-single-tab" data-tab-url="${safeUrl}" title="Close this tab">
+        <button class="chip-action chip-close" data-action="close-single-tab" data-tab-url="${safeUrl}" title="关闭标签">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
         </button>
       </div>
@@ -785,7 +1126,7 @@ function buildOverflowChips(hiddenTabs, urlCounts = {}) {
   return `
     <div class="page-chips-overflow" style="display:none">${hiddenChips}</div>
     <div class="page-chip page-chip-overflow clickable" data-action="expand-chips">
-      <span class="chip-text">+${hiddenTabs.length} more</span>
+      <span class="chip-text">还有 ${hiddenTabs.length} 个</span>
     </div>`;
 }
 
@@ -815,12 +1156,12 @@ function renderDomainCard(group) {
 
   const tabBadge = `<span class="open-tabs-badge">
     ${ICONS.tabs}
-    ${tabCount} tab${tabCount !== 1 ? 's' : ''} open
+    ${tabCount} 个标签
   </span>`;
 
   const dupeBadge = hasDupes
     ? `<span class="open-tabs-badge" style="color:var(--accent-amber);background:rgba(200,113,58,0.08);">
-        ${totalExtras} duplicate${totalExtras !== 1 ? 's' : ''}
+        ${totalExtras} 个重复
       </span>`
     : '';
 
@@ -853,10 +1194,10 @@ function renderDomainCard(group) {
       ${faviconUrl ? `<img class="chip-favicon" src="${faviconUrl}" alt="" onerror="this.style.display='none'">` : ''}
       <span class="chip-text">${label}</span>${dupeTag}
       <div class="chip-actions">
-        <button class="chip-action chip-save" data-action="defer-single-tab" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="Save for later">
+        <button class="chip-action chip-save" data-action="defer-single-tab" data-tab-url="${safeUrl}" data-tab-title="${safeTitle}" title="稍后处理">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" /></svg>
         </button>
-        <button class="chip-action chip-close" data-action="close-single-tab" data-tab-url="${safeUrl}" title="Close this tab">
+        <button class="chip-action chip-close" data-action="close-single-tab" data-tab-url="${safeUrl}" title="关闭标签">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
         </button>
       </div>
@@ -866,14 +1207,14 @@ function renderDomainCard(group) {
   let actionsHtml = `
     <button class="action-btn close-tabs" data-action="close-domain-tabs" data-domain-id="${stableId}">
       ${ICONS.close}
-      Close all ${tabCount} tab${tabCount !== 1 ? 's' : ''}
+      关闭全部 ${tabCount} 个标签
     </button>`;
 
   if (hasDupes) {
     const dupeUrlsEncoded = dupeUrls.map(([url]) => encodeURIComponent(url)).join(',');
     actionsHtml += `
       <button class="action-btn" data-action="dedup-keep-one" data-dupe-urls="${dupeUrlsEncoded}">
-        Close ${totalExtras} duplicate${totalExtras !== 1 ? 's' : ''}
+        关闭 ${totalExtras} 个重复标签
       </button>`;
   }
 
@@ -882,7 +1223,7 @@ function renderDomainCard(group) {
       <div class="status-bar"></div>
       <div class="mission-content">
         <div class="mission-top">
-          <span class="mission-name">${isLanding ? 'Homepages' : (group.label || friendlyDomain(group.domain))}</span>
+          <span class="mission-name">${isLanding ? '常用首页' : (group.label || friendlyDomain(group.domain))}</span>
           ${tabBadge}
           ${dupeBadge}
         </div>
@@ -891,7 +1232,7 @@ function renderDomainCard(group) {
       </div>
       <div class="mission-meta">
         <div class="mission-page-count">${tabCount}</div>
-        <div class="mission-page-label">tabs</div>
+        <div class="mission-page-label">标签</div>
       </div>
     </div>`;
 }
@@ -932,7 +1273,7 @@ async function renderDeferredColumn() {
 
     // Render active checklist items
     if (active.length > 0) {
-      countEl.textContent = `${active.length} item${active.length !== 1 ? 's' : ''}`;
+      countEl.textContent = `${active.length} 项`;
       list.innerHTML = active.map(item => renderDeferredItem(item)).join('');
       list.style.display = 'block';
       empty.style.display = 'none';
@@ -952,7 +1293,7 @@ async function renderDeferredColumn() {
     }
 
   } catch (err) {
-    console.warn('[tab-out] Could not load saved tabs:', err);
+    console.warn('[tab-new] Could not load saved tabs:', err);
     column.style.display = 'none';
   }
 }
@@ -981,7 +1322,7 @@ function renderDeferredItem(item) {
           <span>${ago}</span>
         </div>
       </div>
-      <button class="deferred-dismiss" data-action="dismiss-deferred" data-deferred-id="${item.id}" title="Dismiss">
+      <button class="deferred-dismiss" data-action="dismiss-deferred" data-deferred-id="${item.id}" title="移除">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
       </button>
     </div>`;
@@ -1012,19 +1353,14 @@ function renderArchiveItem(item) {
  * renderStaticDashboard()
  *
  * The main render function:
- * 1. Paints greeting + date
- * 2. Fetches open tabs via chrome.tabs.query()
- * 3. Groups tabs by domain (with landing pages pulled out to their own group)
- * 4. Renders domain cards
- * 5. Updates footer stats
- * 6. Renders the "Saved for Later" checklist
+ * 1. Fetches open tabs via chrome.tabs.query()
+ * 2. Groups tabs by domain (with landing pages pulled out to their own group)
+ * 3. Renders domain cards
+ * 4. Renders the "Saved for Later" checklist
  */
 async function renderStaticDashboard() {
-  // --- Header ---
-  const greetingEl = document.getElementById('greeting');
-  const dateEl     = document.getElementById('dateDisplay');
-  if (greetingEl) greetingEl.textContent = getGreeting();
-  if (dateEl)     dateEl.textContent     = getDateDisplay();
+  await renderQuickAccess();
+  await renderTodoList();
 
   // --- Fetch tabs ---
   await fetchOpenTabs();
@@ -1142,26 +1478,14 @@ async function renderStaticDashboard() {
     return b.tabs.length - a.tabs.length;
   });
 
-  // --- Render domain cards ---
-  const openTabsSection      = document.getElementById('openTabsSection');
-  const openTabsMissionsEl   = document.getElementById('openTabsMissions');
-  const openTabsSectionCount = document.getElementById('openTabsSectionCount');
-  const openTabsSectionTitle = document.getElementById('openTabsSectionTitle');
-
-  if (domainGroups.length > 0 && openTabsSection) {
-    if (openTabsSectionTitle) openTabsSectionTitle.textContent = 'Open tabs';
-    openTabsSectionCount.innerHTML = `${domainGroups.length} domain${domainGroups.length !== 1 ? 's' : ''} &nbsp;&middot;&nbsp; <button class="action-btn close-tabs" data-action="close-all-open-tabs" style="font-size:11px;padding:3px 10px;">${ICONS.close} Close all ${realTabs.length} tabs</button>`;
-    openTabsMissionsEl.innerHTML = domainGroups.map(g => renderDomainCard(g)).join('');
-    openTabsSection.style.display = 'block';
-  } else if (openTabsSection) {
-    openTabsSection.style.display = 'none';
-  }
+  openTabsTotalCount = realTabs.length;
+  renderOpenTabsSection();
 
   // --- Footer stats ---
   const statTabs = document.getElementById('statTabs');
   if (statTabs) statTabs.textContent = openTabs.length;
 
-  // --- Check for duplicate Tab Out tabs ---
+  // --- Check for duplicate tab new tabs ---
   checkTabOutDupes();
 
   // --- Render "Saved for Later" column ---
@@ -1188,7 +1512,7 @@ document.addEventListener('click', async (e) => {
 
   const action = actionEl.dataset.action;
 
-  // ---- Close duplicate Tab Out tabs ----
+  // ---- Close duplicate tab new tabs ----
   if (action === 'close-tabout-dupes') {
     await closeTabOutDupes();
     playCloseSound();
@@ -1198,7 +1522,7 @@ document.addEventListener('click', async (e) => {
       banner.style.opacity = '0';
       setTimeout(() => { banner.style.display = 'none'; banner.style.opacity = '1'; }, 400);
     }
-    showToast('Closed extra Tab Out tabs');
+    showToast('已关闭多余页面');
     return;
   }
 
@@ -1218,6 +1542,115 @@ document.addEventListener('click', async (e) => {
   if (action === 'focus-tab') {
     const tabUrl = actionEl.dataset.tabUrl;
     if (tabUrl) await focusTab(tabUrl);
+    return;
+  }
+
+  // ---- Open a quick access link ----
+  if (action === 'open-quick-link') {
+    const linkUrl = actionEl.dataset.linkUrl;
+    if (linkUrl) await chrome.tabs.create({ url: linkUrl });
+    return;
+  }
+
+  // ---- Remove a quick access link ----
+  if (action === 'remove-quick-link') {
+    const linkId = actionEl.dataset.linkId || activeQuickLinkMenuId;
+    if (!linkId) return;
+
+    closeQuickLinkMenu();
+    await openDeleteQuickLinkModal(linkId);
+    return;
+  }
+
+  // ---- Edit a quick access link ----
+  if (action === 'edit-quick-link') {
+    const linkId = actionEl.dataset.linkId || activeQuickLinkMenuId;
+    closeQuickLinkMenu();
+    if (linkId) await openQuickLinkModal(linkId);
+    return;
+  }
+
+  // ---- Toggle quick access item menu ----
+  if (action === 'toggle-quick-link-menu') {
+    e.stopPropagation();
+    const linkId = actionEl.dataset.linkId;
+    if (!linkId) return;
+    if (activeQuickLinkMenuId === linkId) {
+      closeQuickLinkMenu();
+    } else {
+      openQuickLinkMenu(actionEl, linkId);
+    }
+    return;
+  }
+
+  // ---- TODO actions ----
+  if (action === 'edit-todo') {
+    const todoId = actionEl.dataset.todoId;
+    if (todoId) await openTodoModal(todoId);
+    return;
+  }
+
+  if (action === 'delete-todo') {
+    const todoId = actionEl.dataset.todoId;
+    if (todoId) await openDeleteTodoModal(todoId);
+    return;
+  }
+
+  if (action === 'confirm-delete-todo') {
+    if (!pendingTodoDeleteId) return;
+    const items = await getTodoItems();
+    await saveTodoItems(items.filter(item => item.id !== pendingTodoDeleteId));
+    closeDeleteTodoModal();
+    await renderTodoList();
+    showToast('已删除 TODO');
+    return;
+  }
+
+  if (action === 'close-todo-modal') {
+    closeTodoModal();
+    return;
+  }
+
+  if (action === 'close-delete-todo-modal') {
+    closeDeleteTodoModal();
+    return;
+  }
+
+  if (action === 'move-block-up' || action === 'move-block-down') {
+    const blockId = actionEl.dataset.blockId;
+    const index = dashboardBlockOrder.indexOf(blockId);
+    const delta = action === 'move-block-up' ? -1 : 1;
+    const nextIndex = index + delta;
+    if (index === -1 || nextIndex < 0 || nextIndex >= dashboardBlockOrder.length) return;
+    const nextOrder = [...dashboardBlockOrder];
+    [nextOrder[index], nextOrder[nextIndex]] = [nextOrder[nextIndex], nextOrder[index]];
+    dashboardBlockOrder = nextOrder;
+    await chrome.storage.local.set({ dashboardBlockOrder });
+    applyDashboardBlockOrder();
+    return;
+  }
+
+  // ---- Confirm quick access link removal ----
+  if (action === 'confirm-remove-quick-link') {
+    if (!pendingQuickLinkDeleteId) return;
+
+    const { quickLinks = [] } = await chrome.storage.local.get('quickLinks');
+    await saveQuickLinks(quickLinks.filter(link => link.id !== pendingQuickLinkDeleteId));
+    closeDeleteQuickLinkModal();
+    await renderQuickAccess();
+    showToast('已移除便捷访问');
+    return;
+  }
+
+  // ---- Close quick access modal ----
+  if (action === 'close-quick-link-modal') {
+    closeQuickLinkModal();
+    return;
+  }
+
+  // ---- Close quick access delete modal ----
+  if (action === 'close-delete-quick-link-modal') {
+    closeDeleteQuickLinkModal();
     return;
   }
 
@@ -1260,7 +1693,7 @@ document.addEventListener('click', async (e) => {
     const statTabs = document.getElementById('statTabs');
     if (statTabs) statTabs.textContent = openTabs.length;
 
-    showToast('Tab closed');
+    showToast('标签已关闭');
     return;
   }
 
@@ -1275,8 +1708,8 @@ document.addEventListener('click', async (e) => {
     try {
       await saveTabForLater({ url: tabUrl, title: tabTitle });
     } catch (err) {
-      console.error('[tab-out] Failed to save tab:', err);
-      showToast('Failed to save tab');
+      console.error('[tab-new] 保存标签失败:', err);
+      showToast('保存失败');
       return;
     }
 
@@ -1295,7 +1728,7 @@ document.addEventListener('click', async (e) => {
       setTimeout(() => chip.remove(), 200);
     }
 
-    showToast('Saved for later');
+    showToast('已保存到稍后处理');
     await renderDeferredColumn();
     return;
   }
@@ -1368,8 +1801,8 @@ document.addEventListener('click', async (e) => {
     const idx = domainGroups.indexOf(group);
     if (idx !== -1) domainGroups.splice(idx, 1);
 
-    const groupLabel = group.domain === '__landing-pages__' ? 'Homepages' : (group.label || friendlyDomain(group.domain));
-    showToast(`Closed ${urls.length} tab${urls.length !== 1 ? 's' : ''} from ${groupLabel}`);
+    const groupLabel = group.domain === '__landing-pages__' ? '常用首页' : (group.label || friendlyDomain(group.domain));
+    showToast(`已关闭 ${groupLabel} 的 ${urls.length} 个标签`);
 
     const statTabs = document.getElementById('statTabs');
     if (statTabs) statTabs.textContent = openTabs.length;
@@ -1398,7 +1831,7 @@ document.addEventListener('click', async (e) => {
         setTimeout(() => b.remove(), 200);
       });
       card.querySelectorAll('.open-tabs-badge').forEach(badge => {
-        if (badge.textContent.includes('duplicate')) {
+        if (badge.textContent.includes('重复')) {
           badge.style.transition = 'opacity 0.2s';
           badge.style.opacity    = '0';
           setTimeout(() => badge.remove(), 200);
@@ -1408,7 +1841,7 @@ document.addEventListener('click', async (e) => {
       card.classList.add('has-neutral-bar');
     }
 
-    showToast('Closed duplicates, kept one copy each');
+    showToast('已关闭重复标签，并保留一份');
     return;
   }
 
@@ -1428,9 +1861,85 @@ document.addEventListener('click', async (e) => {
       animateCardOut(c);
     });
 
-    showToast('All tabs closed. Fresh start.');
+    showToast('已关闭全部标签');
     return;
   }
+});
+
+document.addEventListener('submit', async (e) => {
+  if (e.target.id === 'todoForm') {
+    e.preventDefault();
+    const objectiveInput = document.getElementById('todoObjective');
+    const krsInput = document.getElementById('todoKrs');
+    const title = objectiveInput ? objectiveInput.value.trim() : '';
+    if (!title) {
+      showToast('请填写事项');
+      return;
+    }
+
+    const krTitles = krsInput
+      ? krsInput.value.split('\n').map(line => line.trim()).filter(Boolean)
+      : [];
+    const items = await getTodoItems();
+    const existing = editingTodoId ? items.find(item => item.id === editingTodoId) : null;
+    const krs = krTitles.map((krTitle, index) => ({
+      id: existing?.krs?.[index]?.id || `${Date.now()}-${index}`,
+      title: krTitle,
+      done: existing?.krs?.[index]?.title === krTitle ? !!existing.krs[index].done : false,
+    }));
+    const wasEditing = !!editingTodoId;
+
+    if (editingTodoId) {
+      await saveTodoItems(items.map(item =>
+        item.id === editingTodoId ? { ...item, title, krs } : item
+      ));
+    } else {
+      await saveTodoItems([
+        ...items,
+        { id: Date.now().toString(), title, done: false, krs },
+      ]);
+    }
+
+    closeTodoModal();
+    await renderTodoList();
+    showToast(wasEditing ? '已保存待办事项' : '已添加待办事项');
+    return;
+  }
+
+  if (e.target.id !== 'quickLinkForm') return;
+  e.preventDefault();
+
+  const titleInput = document.getElementById('quickLinkTitle');
+  const urlInput = document.getElementById('quickLinkUrl');
+  const rawUrl = urlInput ? urlInput.value.trim() : '';
+  const url = getDirectUrl(rawUrl);
+  if (!url) {
+    showToast('请输入有效链接');
+    return;
+  }
+
+  const { quickLinks = [] } = await chrome.storage.local.get('quickLinks');
+  const title = titleInput && titleInput.value.trim()
+    ? titleInput.value.trim()
+    : getQuickLinkTitle(url);
+  const wasEditing = !!editingQuickLinkId;
+
+  if (editingQuickLinkId) {
+    await saveQuickLinks(quickLinks.map(link =>
+      link.id === editingQuickLinkId ? { ...link, title, url } : link
+    ));
+  } else {
+    await saveQuickLinks([
+      ...quickLinks,
+      { id: Date.now().toString(), title, url },
+    ]);
+  }
+
+  if (titleInput) titleInput.value = '';
+  if (urlInput) urlInput.value = '';
+  await renderQuickAccess();
+  closeQuickLinkModal();
+  showToast(wasEditing ? '已保存便捷访问' : '已添加便捷访问');
 });
 
 // ---- Archive toggle — expand/collapse the archive section ----
@@ -1447,6 +1956,12 @@ document.addEventListener('click', (e) => {
 
 // ---- Archive search — filter archived items as user types ----
 document.addEventListener('input', async (e) => {
+  if (e.target.id === 'openTabsSearch') {
+    openTabsSearchQuery = e.target.value;
+    renderOpenTabsSection();
+    return;
+  }
+
   if (e.target.id !== 'archiveSearch') return;
 
   const q = e.target.value.trim().toLowerCase();
@@ -1469,11 +1984,210 @@ document.addEventListener('input', async (e) => {
     );
 
     archiveList.innerHTML = results.map(item => renderArchiveItem(item)).join('')
-      || '<div style="font-size:12px;color:var(--muted);padding:8px 0">No results</div>';
+      || '<div style="font-size:12px;color:var(--muted);padding:8px 0">没有结果</div>';
   } catch (err) {
-    console.warn('[tab-out] Archive search failed:', err);
+    console.warn('[tab-new] Archive search failed:', err);
   }
 });
+
+document.addEventListener('change', async (e) => {
+  const actionEl = e.target.closest('[data-action]');
+  if (!actionEl) return;
+  const action = actionEl.dataset.action;
+
+  if (action === 'toggle-todo-o') {
+    const todoId = actionEl.dataset.todoId;
+    const checked = actionEl.checked;
+    const items = await getTodoItems();
+    await saveTodoItems(items.map(item =>
+      item.id === todoId
+        ? {
+            ...item,
+            done: checked,
+            krs: (item.krs || []).map(kr => ({ ...kr, done: checked })),
+          }
+        : item
+    ));
+    await renderTodoList();
+    return;
+  }
+
+  if (action === 'toggle-todo-kr') {
+    const todoId = actionEl.dataset.todoId;
+    const krId = actionEl.dataset.krId;
+    const checked = actionEl.checked;
+    const items = await getTodoItems();
+    await saveTodoItems(items.map(item => {
+      if (item.id !== todoId) return item;
+      const krs = (item.krs || []).map(kr => kr.id === krId ? { ...kr, done: checked } : kr);
+      return { ...item, krs };
+    }));
+    await renderTodoList();
+  }
+});
+
+document.addEventListener('click', async (e) => {
+  if (!e.target.closest('#quickLinkMenu') && !e.target.closest('[data-action="toggle-quick-link-menu"]')) {
+    closeQuickLinkMenu();
+  }
+
+  if (e.target.closest('#openQuickLinkModal')) {
+    openQuickLinkModal();
+    return;
+  }
+
+  if (e.target.id === 'quickLinkModal') {
+    closeQuickLinkModal();
+    return;
+  }
+
+  if (e.target.id === 'deleteQuickLinkModal') {
+    closeDeleteQuickLinkModal();
+    return;
+  }
+
+  if (e.target.id === 'todoModal') {
+    closeTodoModal();
+    return;
+  }
+
+  if (e.target.id === 'deleteTodoModal') {
+    closeDeleteTodoModal();
+    return;
+  }
+
+  if (e.target.closest('#openTodoModal')) {
+    await openTodoModal();
+    return;
+  }
+
+  const todoToggle = e.target.closest('#todoToggle');
+  if (todoToggle) {
+    todoCollapsed = !todoCollapsed;
+    try {
+      await chrome.storage.local.set({ todoCollapsed });
+      await renderTodoList();
+    } catch (err) {
+      console.warn('[tab-new] Could not save TODO state:', err);
+    }
+    return;
+  }
+
+  const openTabsToggle = e.target.closest('#openTabsToggle');
+  if (openTabsToggle) {
+    openTabsCollapsed = !openTabsCollapsed;
+    try {
+      await chrome.storage.local.set({ openTabsCollapsed });
+      renderOpenTabsSection();
+    } catch (err) {
+      console.warn('[tab-new] Could not save open tabs state:', err);
+    }
+    return;
+  }
+
+  const toggle = e.target.closest('#quickAccessToggle');
+  if (!toggle) return;
+
+  quickAccessCollapsed = !quickAccessCollapsed;
+  try {
+    await chrome.storage.local.set({ quickAccessCollapsed });
+    await renderQuickAccess();
+  } catch (err) {
+    console.warn('[tab-new] Could not save quick access state:', err);
+  }
+});
+
+document.addEventListener('dragstart', (e) => {
+  if (e.target.closest('.quick-link-menu')) {
+    e.preventDefault();
+    return;
+  }
+
+  const link = e.target.closest('.quick-link');
+  if (!link || link.classList.contains('quick-link-add')) return;
+  draggedQuickLinkId = link.dataset.linkId || '';
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', draggedQuickLinkId);
+  link.classList.add('dragging');
+  document.getElementById('quickLinks')?.classList.add('sorting');
+});
+
+document.addEventListener('dragend', (e) => {
+  const link = e.target.closest('.quick-link');
+  if (link) link.classList.remove('dragging');
+  document.querySelectorAll('.quick-link.drag-over, .quick-link.drop-before, .quick-link.drop-after').forEach(item => {
+    item.classList.remove('drag-over', 'drop-before', 'drop-after');
+  });
+  document.getElementById('quickLinks')?.classList.remove('sorting');
+  draggedQuickLinkId = '';
+});
+
+document.addEventListener('dragover', (e) => {
+  const target = e.target.closest('.quick-link');
+  if (!target || target.classList.contains('quick-link-add')) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+
+  document.querySelectorAll('.quick-link.drag-over').forEach(item => {
+    if (item !== target) item.classList.remove('drag-over');
+  });
+  document.querySelectorAll('.quick-link.drop-before, .quick-link.drop-after').forEach(item => {
+    if (item !== target) item.classList.remove('drop-before', 'drop-after');
+  });
+
+  if (target.dataset.linkId !== draggedQuickLinkId) {
+    const rect = target.getBoundingClientRect();
+    quickLinkDropPosition = e.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+    target.classList.add('drag-over', quickLinkDropPosition === 'before' ? 'drop-before' : 'drop-after');
+  }
+});
+
+document.addEventListener('dragleave', (e) => {
+  const target = e.target.closest('.quick-link');
+  if (!target || target.contains(e.relatedTarget)) return;
+  target.classList.remove('drag-over', 'drop-before', 'drop-after');
+});
+
+document.addEventListener('drop', async (e) => {
+  const target = e.target.closest('.quick-link');
+  if (!target || target.classList.contains('quick-link-add') || !draggedQuickLinkId) return;
+  e.preventDefault();
+
+  const targetId = target.dataset.linkId;
+  if (!targetId || targetId === draggedQuickLinkId) return;
+
+  const { quickLinks = [] } = await chrome.storage.local.get('quickLinks');
+  const fromIndex = quickLinks.findIndex(link => link.id === draggedQuickLinkId);
+  const toIndex = quickLinks.findIndex(link => link.id === targetId);
+  if (fromIndex === -1 || toIndex === -1) return;
+
+  const reordered = [...quickLinks];
+  const [moved] = reordered.splice(fromIndex, 1);
+  let insertIndex = toIndex;
+  if (quickLinkDropPosition === 'after') insertIndex += 1;
+  if (fromIndex < insertIndex) insertIndex -= 1;
+  reordered.splice(insertIndex, 0, moved);
+  await saveQuickLinks(reordered);
+  await renderQuickAccess();
+  const list = document.getElementById('quickLinks');
+  if (list) {
+    list.classList.add('reordered');
+    setTimeout(() => list.classList.remove('reordered'), 220);
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    closeQuickLinkMenu();
+    closeQuickLinkModal();
+    closeDeleteQuickLinkModal();
+    closeTodoModal();
+    closeDeleteTodoModal();
+  }
+});
+
+window.addEventListener('resize', closeQuickLinkMenu);
+window.addEventListener('scroll', closeQuickLinkMenu, true);
 
 
 /* ----------------------------------------------------------------
